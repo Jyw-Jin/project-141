@@ -1,0 +1,486 @@
+---
+title: "sta141a project"
+output: html_document
+name: Jinying Wei
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#name:Jinying Wei #SID:918838720
+
+# 1." **Exploring neural decision-making in response to visual stimuli: an analysis based on Steinmetz et al. (2019)** "
+
+**Abstract:** In this analysis, I have performed an exploratory analysis of the data. I plotted ggplot to show how the data differed in various aspects as a way to learn more about the dataset. Then, I performed data integration while exploring homogeneity and heterogeneity of mice. To assess the homogeneity of feedback variances, I performed ANOVA tests and Tukey tests. The results showed significant differences in the "mouse" and "session" variables between the two groups, highlighting differences in feedback patterns. I then developed logistic regression models based on various predictor variables to predict feedback. The model was iteratively improved by removing statistically insignificant variables. The final model showed improved predictive performance.
+Overall, my analysis involved data integration, dimensionality reduction via PCA, ANOVA, and Tukey's test, and logistic regression modeling. The significance of these steps is to explore patterns, identify important variables, and improve predictive performance.
+
+## Section 1: Introduction
+
+In this project, I will analyze the complexity of the neural decision-making process in mice. I'm going to extract the data and build a model to infer whether our conjecture is related to the data. Keep in mind that these experiments were revealed through a series of visual stimulation experiments. In this project, I will draw on the detailed data collected by Steinmetz et al. (2019), I focused on understanding how neurons respond to visual contrast at different levels. These experiments were initially conducted on 10 mice over 39 sessions and involved the presentation of randomly varying visual stimuli, based on which the mice made decisions. Our analysis focused in particular on the sequence of neuronal spines from the start of stimulation to 0.4 seconds after initiation, covering 18 selected stages in four mice: Corey, Frossman, Therefore, and Lederberg. As we look at this wealth of data, we hope to understand how neural activity underpins decision-making in these organisms. Focusing on this research can continue to influence different scientific directions in the real world. For example, the findings could help scientists continue to study neuroscience to understand the complexity of the brain and neural activity. How the brain reacts when making a decision.
+
+## Section 2: Exploratory analysis And Data Integration
+
+```{r}
+library(data.table)
+library(RColorBrewer)
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+library(car)
+setwd("/Users/yoursflo/Downloads/sessions")
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('session',i,'.rds',sep=''))
+  # print(session[[i]]$mouse_name)
+  # print(session[[i]]$date_exp)
+}
+for(i in 1:18){
+  print(paste("Session", i))
+  print(paste("Unique brain areas:", length(unique(session[[i]]$brain_area))))
+  print(table(session[[i]]$feedback_type))
+  print(paste("Missing spks:", sum(is.na(unlist(session[[i]]$spks)))))
+  print(paste("Missing feedback types:", sum(is.na(session[[i]]$feedback_type))))
+  print("---")
+}
+
+i_session = 3
+i_trial = 12
+spikes = session[[i_session]]$spks[[i_trial]]
+total_spikes = rowSums(spikes)
+ggplot(data.frame(neuron = 1:length(total_spikes), total_spikes = total_spikes), aes(x = neuron, y = total_spikes)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Neuron", y = "Total number of spikes", title = paste("Total number of spikes per neuron in trial", i_trial, "of session", i_session))
+
+avg_spikes = colMeans(spikes)
+
+feedback_type = session[[i_session]]$feedback_type[i_trial]
+
+avg_spikes_per_trial <- sapply(session[[i_session]]$spks, function(x) mean(rowSums(x)))
+
+cor.test(avg_spikes_per_trial, session[[i_session]]$feedback_type)
+
+
+num_neurons <- sapply(session, function(x) max(sapply(x$spks, nrow)))
+print(paste("Number of neurons per session: ", num_neurons))
+num_trials <- sapply(session, function(x) length(x$spks))
+print(paste("Number of trials per session: ", num_trials))
+stimuli_conditions <- lapply(session, function(x) table(paste(x$contrast_left, x$contrast_right)))
+print("Stimuli conditions per session: ")
+print(stimuli_conditions)
+feedback_types <- lapply(session, function(x) table(x$feedback_type))
+print("Feedback types per session: ")
+print(feedback_types)
+summary_data <- data.frame(
+  Session = 1:18,
+  Neurons = num_neurons,
+  Trials = num_trials,
+  Stimuli_Conditions = sapply(stimuli_conditions, function(x) paste(names(x), collapse = ", ")),
+  Feedback_Types = sapply(feedback_types, function(x) paste(names(x), collapse = ", "))
+)
+
+print(summary_data)
+
+
+```
+
+Analysis: First, I summarize the successes and failures of each session. Of these 18 meetings, there were more successes (feedback type '1') than failures (feedback type '-1'). For example, for meeting 15, for session 15, 95 trials had feedback type -1 (failed) and 309 trials had feedback type 1 (successful).
+
+gg-plot: According to the figure, there is a neuron in the 400-600 range (on the x axis) that fires about 50 times (on the y axis) during trial 12 in section 3. That could mean it's an outlier.
+
+```{r}
+# session
+V=n.session=length(session)
+
+meta <- tibble(
+  mouse_name = rep('name',n.session),
+  date_exp =rep('dt',n.session),
+  n_brain_area = rep(0,n.session),
+  n_neurons = rep(0,n.session),
+  n_trials = rep(0,n.session),
+  success_rate = rep(0,n.session)
+)
+
+for(i in 1:n.session){
+  tmp = session[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+}
+summary(meta)
+```
+
+summary:
+
+n_brain_area: Represents the number of unique brain regions recorded in each session. The minimum number of brain regions recorded in a single session was 5 and the maximum was 15. The median number of brain regions recorded across sessions was 10, with an average of about 9.5 brain regions recorded per session.
+
+n\_ Neurons: This represents the number of neurons recorded in the first trial of each session. The sessions recorded a minimum of 474 neurons and a maximum of 1,769 neurons. The median number of neurons recorded across sessions was 822.5, with an average of about 906 neurons recorded per session.
+
+n_trials: This tells you the number of trials conducted per session. At least 114 trials were held and a maximum of 447 trials were held at these sessions. The median number of trials conducted across the course was 261, with an average of about 282 trials per course.
+
+success_rate: This indicates the percentage of successful trials per course of treatment. The lowest success rate of all courses was about 60.53%, and the highest success rate was 83.04%. The median success rate was about 68.98% and the average success rate was about 70.74%.
+
+```{r}
+meta$session<-paste0("session",1:18)
+count<-data.table()
+count$sessionname<-rep(paste0("session",1:18),2)
+count$type<-c(rep("neurons",18),rep("trials",18))
+count$count<-999
+for (i in 1:18) {
+  count$count[i]<-length(session[[i]]$brain_area)
+  count$count[i+18]<-length(session[[i]]$feedback_type)
+}
+count<-as.data.frame(count)
+
+p1 <- ggplot2::ggplot(count,
+                      aes(x=sessionname,y=count,group=type,fill=type))+geom_bar(stat = "identity",position="dodge")+
+  scale_fill_manual(values = c("#8c510a", "#f6e8c3", 
+                                        "#c7eae5", "#5ab4ac", "#01665e", "#af8dc3"))+theme_light()+theme(axis.text.x = element_text(angle = 30,hjust = 1))
+p1
+
+count1<-data.table()
+for (i in 1:18) {
+  count<-data.table()
+  count$type<-c(names(table(session[[i]]$contrast_right)),names(table(session[[i]]$contrast_left)))
+  count$count<-c(table(session[[i]]$contrast_right),table(session[[i]]$contrast_left))
+  count$sessionname<-paste0("session",i)
+  count$posi<-c(rep("contrast_right",4),rep("contrast_left",4))
+  count1<-rbind(count1,count)
+}
+count1<-as.data.frame(count1)
+
+p2<-ggplot2::ggplot(count1[count1$posi=="contrast_left",],
+                aes(x=sessionname,y=count,group=type,fill=type))+geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("#c7eae5", "#018852","#5ab4ac", "#01665e"))+theme_light()+theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+p3<-ggplot2::ggplot(count1[count1$posi=="contrast_right",],
+                    aes(x=sessionname,y=count,group=type,fill=type))+geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("#c7eae5", "#018852","#5ab4ac", "#01665e"))+theme_light()+theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+
+plot_grid(p2, p3,labels = c("contrast_left","contrast_right"), ncol = 2)
+
+```
+
+Analysis：
+
+For this graph of p1, I find that the value of session4 neurons exceeds 1500. This is bigger than any other meeting. This may indicate more detailed data collected during session 4. I guess it's probably the fourth session that captures more neuron activity. At the same time, I found that session10 had the most trials of these sessions.
+
+For plot 2 and p3, in contrast left, session10 has more parts of type 1, greater than 100, than in contrast right, less than 100. I suspect that this may be due to a bias in stimulus presentation: the experimental design in Section 10 May have intended to present more high-contrast (grade 1) stimuli to the subject's left visual field.
+
+Another possibility is to test for hemiplegia: Researchers may be interested in studying hemiplegia in the brain. By presenting more high-contrast stimuli to one side, they could explore how the brain responds differently in the left and right visual fields.
+
+```{r}
+count2<-data.table()
+for (i in 1:18) {
+  count<-data.table()
+  count$type<-names(table(session[[i]]$feedback_type))
+  count$count<-table(session[[i]]$feedback_type)
+  count$sessionname<-paste0("session",i)
+  count2<-rbind(count2,count)
+}
+count2<-as.data.frame(count2)
+p4<-ggplot2::ggplot(count2,
+                aes(x=sessionname,y=count,group=type,fill=type))+geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("#123294", "#723999"))+theme_light()+theme(axis.text.x = element_text(angle = 30,hjust = 1))
+  
+plot(p4)
+meta$success_level <- cut(meta$success_rate, breaks = c(0, 0.65, 0.8, 1), labels = c("low", "medium", "high"), include.lowest = TRUE)
+
+p5 <- ggplot(meta) +
+  geom_text(aes(x=session, y=n_trials+8, label=signif(success_rate, 2))) +
+  geom_bar(aes(x=session, y=n_trials, fill = success_level), stat = "identity") +
+  scale_fill_manual(values = c("low" = "red", "medium" = "yellow", "high" = "green")) +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 30,hjust = 1)) +
+  ylab("success_rate")
+
+plot(p5)
+
+```
+
+From plot 4, we can see that meeting 15 has the highest number of successful meetings and meeting 1 has the lowest number of successful meetings. plot 5 I do a more intuitive numerical processing of the overall data, showing the success rate in each session. The meeting with the highest success rate was session 17 - (0.83).
+
+##### ii. explore the neural activities during each trial.
+
+```{r}
+all_areas = unique(unlist(lapply(session, function(x) unique(x$brain_area))))
+print(all_areas)
+```
+
+Analysis: This shows the brain regions of 58 mice included in the dataset. These are abbreviations for different areas of the mouse brain. Here's a brief description of some of them when I looked them up on Google: "ACA" : anterior cingulate area "MOs" : secondary motor area "LS" : lateral septal nucleus "VISp" : primary visual area "CA3" : Hippocampus CA3 region "Daughter" : the mycelium layer "DG" : dentate gyrus "CA1" : Hippocampus CA1 region "VISl": side view area "VISpm" : posterior medial visual area
+
+```{r}
+library(tidyverse)
+library(cowplot)
+library(RColorBrewer)
+i.s=2 # indicator for this session
+i.t=1 # indicator for this trial 
+
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+}
+
+f<-function(i.s){
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                        session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.t],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+trial.summary<-as.data.frame(trial.summary)
+trial.summary$mouse<-session[[i.s]]$mouse_name
+trial.summary$session<-paste0("session",i.s)
+trial.summary
+}
+
+session_1<-f(1)
+# Turning it into a data frame
+plot_session<-function(data){
+trial.summary <- as_tibble(data)
+plot_data<-trial.summary%>%.[,c(1:c(ncol(.)-6),ncol(.)-2)]%>%gather(key="area",value="spk",-"id")
+
+ggplot(plot_data)+
+  geom_smooth(aes(x=id,y=spk,group=area,color=area),se=F,method="loess")+
+  geom_line(aes(x=id,y=spk,group=area,color=area))+
+  scale_color_manual(values = c(brewer.pal(10,"Set1"),brewer.pal(9,"Set2")))+
+  theme_light()
+}
+plot_session(session_1)
+
+session_2<-f(3)
+plot_session(session_2)
+#######trial
+trial<-function(s,t){
+this_session=session[[s]]
+i.t=t
+a<-this_session$spks[[i.t]]
+a[a>1]<-1
+a<-as.data.frame(a)
+colnames(a)<-this_session$time[[t]]
+a$id<-1:nrow(a)
+a$name<-this_session$brain_area
+this_session$feedback_type[t]
+b<-gather(a,key = "time",value = "spk",-name,-id)
+b$time<-as.numeric(b$time)
+ggplot(b[b$spk!=0,])+geom_point(aes(x=time,y=id,group=name,color=name))+
+scale_color_manual(values = c(brewer.pal(10,"Set1"),brewer.pal(9,"Set2")))+
+theme_light()+
+  theme(axis.text.x = element_text(angle = 30,hjust = 1))+ggtitle(paste0("feedback_",this_session$feedback_type[t]))+
+  scale_x_continuous(limits = c(min(unique(b[b$spk!=0,]$time)),max(unique(b[b$spk!=0,]$time))), 
+                     breaks = seq(min(unique(b[b$spk!=0,]$time)),max(unique(b[b$spk!=0,]$time)), 0.09))
+}
+trial(1,1)
+trial(1,2)
+trial(1,3)
+
+plot_grid(trial(1,1), trial(1,3), ncol = 2)
+
+
+spks.trial <- session[[1]]$spks[[1]]
+
+total.spikes <- apply(spks.trial, 1, sum)
+
+avg.spikes <- mean(total.spikes)
+cat("Average number of spikes per neuron in Trial 1:", avg.spikes, "\n")
+
+active.neurons <- sum(total.spikes > 0)
+avg.spikes.active <- sum(total.spikes) / active.neurons
+cat("Average number of spikes per active neuron in Trial 1:", avg.spikes.active, "\n")
+
+#When I looked it up on Wikipedia, I realized that VISp would be important if I wanted to study how mice process visual information. Based on our initial visualization of the code, reduce the variables and only display VISp.
+
+plot_session <- function(data) {
+  trial.summary <- as_tibble(data)
+  plot_data <- trial.summary %>% 
+    .[, c(1:c(ncol(.)-6), ncol(.)-2)] %>%
+    gather(key = "area", value = "spk", -"id") %>%
+    filter(area == "VISp")  
+  
+  ggplot(plot_data) +
+    geom_smooth(aes(x = id, y = spk, group = area, color = area), se = FALSE, method = "loess") +
+    geom_line(aes(x = id, y = spk, group = area, color = area)) +
+    scale_color_manual(values = c(brewer.pal(10, "Set1"), brewer.pal(9, "Set2"))) +
+    theme_light()
+}
+
+
+session_1 <- f(1)
+plot_session(session_1)
+
+session_2 <- f(3)
+plot_session(session_2)
+
+
+```
+
+(1) 1.581744 is the average spike per neuron in the first 0.4 seconds of Trial 1 in Session 1.
+
+(2) 3.806557 is the average spike per active neuron. Analysis:
+
+(3) The first two plots generated by plot_session (session_1) and plot_session_2 are visualizations of average neural activity in each brain region during the first and third trials, respectively. (4)In the figure in Chapter 1, the X-axis represents the ID of the test session, and the Y-axis shows the average spike count. Each line corresponds to a unique brain region. Thus, these graphs outline how the average neural activity in each area evolved over the course of each course of the trial. We've given different colors to eight brain regions. From the graph generated in session1, it is observed that sub (brown line) has the highest average peak, distributed around 2.5. The second image is a visualization of the brain regions of Session 3. There are 11 brain regions in Session three. According to the observation, the orange line is higher for the average peak of VISP. VISP queries from the above data represent the primary visual area in the mouse's brain.
+
+(4) The last two plots generated by the plot_grid are scatter plots showing the spiking activity of each neuron over time in the first and third trials of the first trial. Each point represents the peak of the neuron, the y axis represents the ID of the neuron, and the x axis represents the time when the peak occurred. The color of the spot corresponds to the brain region of the neuron. From the diagram on the left, we can see that the distribution of different neurons is stacked. The figure on the left shows that the blue dots (CA3) are distributed between ID400 and 600. The red dots (ACA) are distributed on the Y-axis between 0 and 400. This shows the range of id of neurons in different brain regions and the time distribution of their spikes. The graph on the right also shows the distribution of neurons and the distribution of SUB in y \~ (400 \~ 600). By comparing the left and right graphs (representing the first and third trials, respectively), I was able to observe changes in neuronal spike patterns across trials. The stacked distribution along the Y-axis suggests that neurons are grouped by brain regions, rather than mixed. This can provide information about the structured nature of experimental recordings, in which different brain regions are recorded in a certain order.
+
+(5) The two graphs (red) show the average peak activity of VISp in different trials. Because of the visual stimulation provided to the mice, it is necessary to analyze the activity of VISp individually. In the first VISp plot, I observed that the curve fluctuates between the Y-axis (1.5-2) as the id increases. I guess I'm observing a steady trend. This could indicate some kind of fatigue response in the nervous system. The second plot shows the activity of VISp in Meeting 2. In the second chart, VISp shows a downward trend. This may be due to the increase of id, the curve gradually flattens out. I suspect that as id progresses, the mice may be adapting to visual stimuli.
+
+##### (iii). Exploring Homogeneity and Heterogeneity between Conversations and Mice To explore homogeneity and heterogeneity between different sessions and mice. I want to use the anova function for analysis of variance. To test whether the feedback received from the mice differed significantly from mouse to mouse or from session to session. This allows insight into whether individual mice behave differently and whether there are differences between sessions.
+
+```{r}
+session_all<-list()
+for(i in 1:18){
+  session_all[[i]]<-assign(paste0("session_",i),f(i))
+}
+session_all<-Reduce(bind_rows,session_all)
+session_all[is.na(session_all)]<-0
+
+
+
+a<-leveneTest(feedback~mouse,session_all)
+b<-leveneTest(feedback~session,session_all)
+
+r<-aov(feedback~mouse,session_all)
+summary(r)
+t<-aov(feedback~session,session_all)
+summary(t)
+TukeyHSD(t,conf.level = 1-0.05) 
+
+```
+
+(1) The terms homogeneity and heterogeneity typically describe how feedback differs from meeting to meeting. When feedback values are homogeneous, they are consistent from meeting to meeting, and when they are heterogeneous, they differ significantly.
+
+(2) Anova examines if the assumed variance is homogeneous, therefore the variability of feedback in each meeting ought to be rather consistent. The validity of the ANOVA results may be impacted if this supposition is broken (for instance, if some sessions exhibit higher variability than others).
+
+(3) I used the Tukey test (taught in sta-106), which analyzes variation in data. While Tukey tests are intended to identify which specific groups have different means, ANOVA is used to compare the means of more than two groups. With a p-value of less than 0.001 (2.73e-10), the first table demonstrates a significant difference between the groups for the variable "mice". With a p-value of less than 0.001 (9.66e-15), the second table demonstrates that the variable "session" also differs significantly between groups. Different sessions are compared in the Tukey Multiple Means comparison table that follows. The p-value that has been adjusted for multiple tests ("p adj"), the lower and upper bounds of the confidence interval ("lwr" and "upr"), and the mean of each comparison ("diff") are all different. As an illustration, session 11 and session 1 differ significantly (p value = 0.0115487), as do session 13 and session 1 (p value = 0.0134066). Many of the comparisons, however, lacked statistical significance (p \> 0.05).
+
+### Section 3. Predictive modeling
+
+### Using glm functions, I will build a number of logistic regression models. I applied the linear regression technique. The estimated coefficient, standard error, Z-value, and related P-value for each predictor are displayed in the figure. The statistical significance of the predictor is assessed using the P-value. The predictor is statistically significant when the P-value is low (often less than 0.05).
+
+```{r}
+#Modeling
+session_all[session_all$feedback==-1,]$feedback<-0
+model<-glm(feedback~`left contr.`+`right contr.`+mouse,data=session_all,family="binomial")
+summary(model)
+#Remove the statistically insignificant variables from the first model
+model1<-glm(feedback~`left contr.`+`right contr.`+mouse+ACA+CA3+DG+LS+MOs+root+SUB+VISp+CA1+POST+VISl+VISpm+LP+MG+MRN+NB+SPF+VISam+LGd+LSr+TH+VISa+VPL+OLF+ORB+PL+AUD+SSp+CP+EPd+LD+PIR+ILA+PO+TT+ORBm+GPe+MB+POL+SCm+SCsg+VISrl+LSc+MOp+PT+LH+MD+MS+RN+SCs+ZI+PAG+RSP+BLA+VPM+SSs+MEA+RT+ACB+OT+SI+SNr,data=session_all,family="binomial")
+summary(model1)
+#Remove the statistically insignificant variables from the second model
+model2<-glm(feedback~`left contr.`+`right contr.`+mouse+LS+root+CA1+POST+VISpm+VPL+LD+PO+GPe+SCm+SCsg+PT+LH+MS+RN+RSP+BLA+VPM+SSs+ACB+SI+SNr,data=session_all,family="binomial")
+summary(model2)
+#Remove the statistically insiginificant variables from the thirf model
+model3<-glm(feedback~`left contr.`+`right contr.`+mouse+LS+root+CA1+POST+VPL+PO+GPe+SCm+PT+MS+RN+RSP+BLA+VPM+SSs+ACB+SI+SNr,data=session_all,family="binomial")
+summary(model3)
+########
+plot(jitter(model3$y)~model3$fitted.values,pch=16,xlab="Fitted values", ylab="Ifeedback")
+threshold = 0.5;
+TP= sum( (model3$fitted.values>threshold) & model3$y) ;
+TN= sum((model3$fitted.values<threshold) & (!model3$y));
+
+
+(TPR=TP/sum( model3$y))
+(FPR=1- TN/sum(!model3$y))
+exp<-exp(confint(model3))
+
+
+
+```
+
+1.  Model appropriate for: At 5080 degrees of freedom, the model's zero deviation is 6118.2, reflecting the response variable's variability when only the intercept (zero model) is taken into account.
+
+-   The residual is 5742.6 at 5057 degrees of freedom, demonstrating the response's residual variability following the inclusion of predictors. The better the fit to the data, the smaller the residual. -When the goodness of fit and model complexity are taken into consideration, the Akaike Information Criterion (AIC) is 5790.6. The model fits the data better when the AIC is smaller.
+
+2.  Expected performance: -The true positive rate (sensitivity) was 0.9672949, meaning that the model accurately predicted roughly 96.7% of actual positive cases. -The model falsely predicted that around 89.9% of the actual negative cases were positive; the false positive rate (1-specificity) was 0.8995248.
+3.  1\. Model evaluation: Mouse, left control, right control, root, CA1, POST, VPL, PO, GPe, SCm, PT, MS, RN, RSP, BLA, VPM, ss, ACB, SI, and SNr are all predictors in the logistic regression model known as "Model 3".
+4.  The right control. , MouseForssmann, MouseLederberg, LS, root, CA1, post, VPL, 'PO', 'GPe', 'SCm', 'PT', 'MS', 'RN', 'RSP', 'BLA', 'VPM', 'ss', 'ACB', 'SI','S Nr' was statistically significant in predicting the feedback variables.
+5.  The AIC value of the new model is lower than that of the old model, indicating that the model fits well.
+6.  Important predictors provide insightful information about the variables that influence feedback.
+7.  The model shows that variables such as "LS", "CA1", "PT", "ss", "RSP", "VPM" have considerable influence on the feedback.
+8.  Based on their higher p-values, some variables, such as "left control," "mouseHench," and "mouseHench," do not appear to be statistically significant in predicting feedback.
+9.  The model shows that variables such as "LS", "CA1", "PT", "ss", "RSP", "VPM" have considerable influence on the feedback.
+10. Based on their higher p-values, some variables, such as "left control," "mouseHench," and "mouseHench," do not appear to be statistically significant in predicting feedback.
+
+-According to these numbers, the model has a reasonable fit overall, with smaller residuals and AIC than the zero model.
+
+### Section 4. Prediction performance on the test sets
+
+```{r}
+setwd("/Users/yoursflo/Downloads/test")
+test1 <- readRDS("test1.rds")
+test2 <- readRDS("test2.rds")
+test_all<-list()
+for(i in 1:2){
+  test_all[[i]]<-assign(paste0("test",i),f(i))
+}
+test_all<-Reduce(bind_rows,test_all)
+test_all<-bind_rows(session_all[1,],test_all)
+test_all<-test_all[-1,]
+test_all[is.na(test_all)]<-0
+predict_out <- predict(model3, newdata = test_all, type = "response")
+
+###Prediction evaluation
+threshold <- 0.5  
+predicted_labels <- ifelse(predict_out >= threshold, "Positive", "Negative")
+# Create matrix
+confusion_matrix <- table(predicted_labels, test_all$feedback)
+print(confusion_matrix)
+
+
+# Correct rate of calculation
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+recall <- confusion_matrix["Positive",1] / sum(confusion_matrix["Positive", ])
+precision <- confusion_matrix["Positive",1] / sum(confusion_matrix[,1])
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(paste("accuracy:", accuracy))
+print(paste("recall:", recall))
+print(paste("precision:", precision))
+print(paste("F1 value:", f1_score))
+
+library(ggplot2)
+
+plot_data <- data.frame(
+  Predicted = factor(predicted_labels, levels = c("Negative", "Positive")),
+  Actual = factor(test_all$feedback, levels = c("-1", "1"))
+)
+
+ggplot(plot_data, aes(x = Predicted, fill = Actual )) +
+  geom_bar(position = "fill") +
+  labs(x = "Predicted", y = "Proportion") +
+  scale_fill_manual(values = c("#999999", "#E69F00"), labels = c("Negative", "Positive")) +
+  ggtitle("Confusion Matrix")
+
+```
+
+### Section 5. Discussion
+
+-65.75% accuracy: 0.657534246575342
+
+-Recall rate: 32.78% (0.327759197324415).
+
+-Precision: 71.53%, or 0.715328467153285
+
+-F 1 score: 0.44954128440367 (44.95%)
+
+Using a logistic regression model (Model 3), these measures were assessed for the test_all dataset's prediction performance. The F1 score is the harmonic average of accuracy and recall. Accuracy assesses the accuracy of positive predictions, recall indicates the ability to properly identify positive examples, and recall is the proportion of right predictions. The model has a modest accuracy but a low recall rate, according to the data. A higher capacity to accurately forecast positive cases is indicated by the relatively high accuracy. The F1 results strike a balance between recall and accuracy.
+
+## #Acknowledgement
+
+In the part of exploratory experiment analysis, the part of Project Consulting in class is used for reference to carry out exploratory analysis. And asked chatgpt about big data, where I could do more intuitive exploratory analysis.
+
+In the section on data integration and discussion of homogeneity and heterogeneity of data, I refer to the previous sta106 work. This section mainly helps me to set up Tukey tests between data. In the model filtering section, the code was modified with the help of chatgpt and the data was continuously screened out.
